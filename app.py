@@ -1,38 +1,57 @@
 from flask import Flask, render_template, request, jsonify
-import openai
+import google.generativeai as genai
 import os
 
 app = Flask(__name__)
 
-# Ganti dengan API Key Anda atau gunakan Environment Variable
-openai.api_key = "KODE_API_KEY_ANDA_DI_SINI"
+# Konfigurasi Gemini API menggunakan Environment Variable dari Render
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=AIzaSyDix5fpgxB_r34nEEZR2Ca1zu8VwiAo8r0)
+
+# Menggunakan model Gemini 1.5 Flash (Gratis & Cepat)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 def generate_long_article(title, keywords):
-    # Tahap 1: Membuat Outline SEO (H2 & H3)
-    outline_prompt = f"Buatlah struktur artikel (H2 saja) sebanyak 8 poin untuk judul: '{title}' dengan fokus keyword: {keywords}. Berikan daftar judulnya saja."
+    # LANGKAH 1: Membuat Outline yang sangat detail (8-10 Sub-bab)
+    outline_prompt = f"""
+    Buatlah outline artikel SEO yang sangat mendalam untuk judul: "{title}".
+    Gunakan keyword: {keywords}.
+    Berikan daftar 8 sampai 10 judul sub-bab (H2) saja, satu per baris, tanpa angka atau simbol.
+    """
     
-    response = openai.ChatCompletion.create(
-        model="gpt-4", # Atau gpt-3.5-turbo agar lebih murah
-        messages=[{"role": "user", "content": outline_prompt}]
-    )
+    outline_response = model.generate_content(outline_prompt)
+    outlines = outline_response.text.strip().split('\n')
     
-    outlines = response.choices[0].message.content.strip().split('\n')
-    full_article_html = f"<h1>{title}</h1>"
+    # Inisialisasi konten dengan Judul Utama
+    full_article_html = f"<div class='article-content'><h1>{title}</h1>"
 
-    # Tahap 2: Menulis isi per sub-judul (looping untuk mencapai 1.500+ kata)
+    # LANGKAH 2: Menulis setiap sub-bab secara terpisah (untuk mengejar 1.500+ kata)
     for section in outlines:
-        if section.strip():
+        section = section.strip()
+        if section:
             print(f"Sedang menulis bagian: {section}")
-            content_prompt = f"Tulis artikel mendalam (minimal 250 kata) untuk sub-bab: '{section}'. Topik utama: {title}. Gunakan keyword: {keywords}. Gunakan format HTML <p> dan jika perlu <ul>."
             
-            section_response = openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=[{"role": "user", "content": content_prompt}]
-            )
+            # Prompt khusus agar Gemini menulis panjang per bagian
+            writing_prompt = f"""
+            Tuliskan konten artikel yang sangat mendalam dan informatif untuk sub-judul: "{section}".
+            Topik utama artikel adalah: "{title}".
+            Gunakan keyword: {keywords}.
             
-            full_article_html += f"<h2>{section}</h2>"
-            full_article_html += section_response.choices[0].message.content
+            Instruksi Penulisan:
+            1. Tulis minimal 250-300 kata untuk bagian ini saja.
+            2. Gunakan gaya bahasa profesional namun mudah dimengerti.
+            3. Gunakan format HTML: <p> untuk paragraf, <ul>/<li> jika ada daftar, dan <strong> untuk penekanan kata penting.
+            4. Jangan mengulang-ulang kalimat yang sama.
+            """
+            
+            try:
+                section_response = model.generate_content(writing_prompt)
+                full_article_html += f"<h2>{section}</h2>"
+                full_article_html += section_response.text
+            except Exception as e:
+                full_article_html += f"<h2>{section}</h2><p>Gagal memproses bagian ini: {str(e)}</p>"
 
+    full_article_html += "</div>"
     return full_article_html
 
 @app.route('/')
@@ -42,9 +61,15 @@ def home():
 @app.route('/write', methods=['POST'])
 def write():
     data = request.json
+    title = data.get('title')
+    keywords = data.get('keywords')
+    
+    if not GEMINI_KEY:
+        return jsonify({"status": "error", "message": "API Key Gemini belum diset di Render!"})
+
     try:
-        hasil = generate_long_article(data['title'], data['keywords'])
-        return jsonify({"status": "success", "content": hasil})
+        hasil_artikel = generate_long_article(title, keywords)
+        return jsonify({"status": "success", "content": hasil_artikel})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
